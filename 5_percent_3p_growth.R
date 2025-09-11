@@ -26,7 +26,7 @@ cpi %>% filter(item_name %in% core$item_name, !is.na(Pchange1)) %>% mutate(p3 = 
   labs(y = NULL,
        x = NULL,
        title = "Percent of Items With 3% Price Growth is Increasing",
-       subtitle = "Percent of 82 item in core basket having at least 3 percent monthly price increases, annualized.",
+       subtitle = "Percent of 83 item in core basket having at least 3 percent monthly price increases, annualized.",
        caption ="BLS, CPI, only seasonally adjusted items included. Author's calculation. Mike Konczal, Roosevelt Institute") +
   theme(panel.grid.major.y = element_line(size=0.5)) +
   theme(plot.title.position = "plot") +

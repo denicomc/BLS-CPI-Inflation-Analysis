@@ -44,7 +44,6 @@ cpi_goods <- cpi %>%
   ungroup() %>%
   mutate(
     trendline = logLinearProjection(
-      tbl        = .,
       date       = date,
       value      = value,
       start_date = as.Date("2023-01-01"),

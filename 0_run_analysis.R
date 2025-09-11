@@ -28,7 +28,7 @@ cpi <- create_cpi_changes(cpi_data)
 
 
 #Graphic 1: Overview
-core_3_6_title <- "Core Inflation Continues to Pick Back Up in July"
+core_3_6_title <- "Core Inflation Continues to Pick Back Up in August"
 g <- three_six_graphic(cpi, "All items less food and energy", "2018-01-01", "2020-01-01", "2022-01-01",
                   title = core_3_6_title, include_3_6 = TRUE, column_alpha = 0.2,
                   subtitle = "All items less food and energy, seasonally adjusted, boxes are one-month change annualized.",
@@ -42,7 +42,7 @@ ggsave("graphics/g1_core_inflation.png", dpi="retina", width = 12, height=6.75, 
 
 #Graphic 1: Overview
 core_3_6_title <- "Services less Shelter Still Elevated in June"
-g <- three_six_graphic(cpi, "Services less rent of shelter", "2018-01-01", "2020-01-01", "2023-01-01",
+g <- three_six_graphic(cpi, "Services less rent of shelter", "2018-01-01", "2020-01-01", "2024-01-01",
                        title = core_3_6_title, include_3_6 = TRUE, column_alpha = 0.2,
                        colors = c("3-Month Change" = "#2c3254", "6-Month Change" = "#ff8361")) +
   theme(
@@ -51,8 +51,8 @@ g <- three_six_graphic(cpi, "Services less rent of shelter", "2018-01-01", "2020
 ggsave("graphics/supercore.png", dpi="retina", width = 12, height=6.75, units = "in")
 
 # Graphic 2: Onion Chart
-onion_title = "Core Inflation Picks Up in July"
-start_onion_date <- max(cpi$date) %m-% months(30)
+onion_title = "Core Inflation Continues to Pick Back Up in August"
+start_onion_date <- "2024-01-01" #max(cpi$date) %m-% months(30)
 onion_chart(cpi, start_onion_date, title=onion_title) +
   theme(
     panel.grid.major.y = element_line(color = "grey80"),
@@ -116,7 +116,6 @@ source("2_january_unadjusted.R")
 source("3_trump_tariffs.R")
 source("5_percent_3p_growth.R")
 
-source("")
 
 
 
@@ -145,7 +144,7 @@ ahe <- getFRED("CES0500000003", rename_variables = "ahe") %>%
 
 
 ahe %>%
-  filter(year(date) >= 2025) %>%
+  filter(year(date) >= 2023) %>%
   ggplot(aes(date, real_wages_Trump)) +
   geom_line(size = 1.2) +
   theme_esp() +
@@ -153,10 +152,10 @@ ahe %>%
   scale_y_continuous(label = percent) +
   scale_x_date(breaks = "1 month", date_labels = "%B\n%Y") +
   labs(
-    title = "Real Wages Up or Down Under President Trump?",
+    title = "Real Wages Are Not Up Since May",
     subtitle = "Change in Average Hourly Earnings Divided by Overall CPI, Since January 2025.",
     caption = "Mike Konczal"
-  )
+  ) 
 ggsave("graphics/real_wages_Trump.png", dpi = "retina", width = 12, height = 6.75, units = "in")
   
 # Nobody is Coming Here Portfolio ----
