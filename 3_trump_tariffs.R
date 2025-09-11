@@ -40,7 +40,7 @@ ggsave("graphics/t1_trump_tariff_targets.png", dpi="retina", width = 12, height=
 cpi_goods <- cpi %>%
   inner_join(goods_levels, by = "item_name") %>%
   group_by(item_name) %>%
-  mutate(value = value/value[date == "2025-01-01"]) %>%
+  mutate(value = 100*value/value[date == "2025-01-01"]) %>%
   ungroup() %>%
   mutate(
     trendline = logLinearProjection(
@@ -84,22 +84,20 @@ cpi_goods %>%
 ggsave("graphics/t2_worst_12_price_increases.png", dpi="retina", width = 12, height=6.75, units = "in")
 
 # Graph 3: The major categories -----
-
-# Plot only top n; order facets by gap
 cpi_goods %>%
   filter(year(date) >= 2023,
          item_name %in% trump_targets) %>%
+  filter(item_name != "Apparel") %>%
   ggplot(aes(date, value)) +
   geom_line(color = esp_navy, size = 1.2) +
   geom_line(aes(y = trendline), linetype = "dashed", color = esp_navy, size = 1) +
   facet_wrap(~ item_name, scales = "free_y") +
   labs(title = "The Likely Tariff Targets Are Seeing Large Price Increases",
-       subtitle = "CPI. Log-linear trendline from Jan 2023 to Dec 2024.") +
+       subtitle = "CPI. 100 = Own Value in January 2025. Log-linear trendline from Jan 2023 to Dec 2024.",
+      caption = "Mike Konczal") +
   theme_esp() +
-  theme(
-    panel.grid.major.y = element_line(color = "grey80"),
-  )
-ggsave("graphics/t2_worst_12_price_increases.png", dpi="retina", width = 12, height=6.75, units = "in")
+  scale_x_date(date_labels = "%b\n%Y", breaks = tidyusmacro::date_breaks_gg(n =6, last = max(cpi_goods$date)))
+ggsave("graphics/preregistered_categories.png", dpi="retina", width = 12, height=6.75, units = "in")
 
 
 # Graph 4: Table on the major parts. -----
