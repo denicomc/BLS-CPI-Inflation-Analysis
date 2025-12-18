@@ -6,9 +6,8 @@ library(lubridate)
 avg_prices <- getBLSFiles("averageprice", "konczal@gmail.com")
 
 
-
-avg_prices_latest <- avg_prices %>%
-  filter(area_code == "0000") %>%                 # keep all years for lag
+avg_prices %>%
+  filter(area_code == "0000") %>% # keep all years for lag
   arrange(item_name, date, .by_group = TRUE) %>%
   group_by(item_name) %>%
   mutate(
@@ -16,36 +15,47 @@ avg_prices_latest <- avg_prices %>%
     yoyP = value / value_12m - 1,
     yoyA = value - value_12m
   ) %>%
-  filter(end_year == 2025) %>%                    # now restrict to 2025
-  slice_max(date, n = 1, with_ties = FALSE) %>%   # latest month in 2025
+  filter(end_year == 2025) %>% # now restrict to 2025
+  slice_max(date, n = 1, with_ties = FALSE) %>% # latest month in 2025
   ungroup() %>%
-  select(item_name, date, value_now = value, value_12m, yoyP, yoyA)
+  select(item_name, date, value_now = value, value_12m, yoyP, yoyA) %>%
+  arrange(desc(yoyA)) %>%
+  head(20)
 
 
-View(avg_prices_latest)
+price_list <- c(
+  "Coffee, 100%, ground roast, all sizes, per lb. (453.6 gm)",
+  "Bananas, per lb. (453.6 gm)", # common grocery item with price sensitivity:contentReference[oaicite:2]{index=2}
+  "Eggs, Grade A, large, per doz.", # volatile staple with consumer sensitivity:contentReference[oaicite:3]{index=3
+  "Gasoline, unleaded regular, per gallon", # key transport expense with high visibility:contentReference[oaicite:5]{index=5}
+  "Electricity per KWH", # utility price often noted in household budgets:contentReference[oaicite:7]{index=7}
+  "Ground beef, 100% beef, per lb. (453.6 gm)" # frequently highlighted meat price in grocery inflation discussions:contentReference[oaicite:8]{index=8}
+)
+
+date_breaks <- generate_dates(avg_prices$date, 10)
+
 
 avg_prices %>%
-  filter(area_code == "0000", end_year == 2025,
-         item_name %in% c("Coffee, 100%, ground roast, all sizes, per lb. (453.6 gm)",
-                   "Orange juice, frozen concentrate, 12 oz. can, per 16 oz. (473.2 ml)",
-                   "Bananas, per lb. (453.6 gm)",
-                   "Lemons, per lb. (453.6 gm)",
-                   "Wine, red and white table, all sizes, any origin, per 1 liter (33.8 oz)",
-                   "Malt beverages, all types, all sizes, any origin, per 16 oz. (473.2 ml)")
-) %>%
-  arrange(item_name, date, .by_group = TRUE) %>%
-  group_by(item_name) %>%
-  mutate(
-    value_12m = lag(value, 12),
-    yoyP = value / value_12m - 1,
-    yoyA = value - value_12m
-  ) %>%
-  ggplot(aes(date, value)) + geom_line() +
+  filter(area_code == "0000", end_year == 2025, item_name %in% price_list) %>%
+  filter(year >= 2022) %>%
+  ggplot(aes(date, value)) +
+  geom_line() +
   facet_wrap(~item_name, scale = "free") +
-  theme_esp()
+  theme_esp() +
+  scale_x_date(date_labels = "%b\n%Y", breaks = date_breaks) +
+  geom_vline(xintercept = as.Date("2025-01-01")) +
+  scale_y_continuous(label = dollar) +
+  labs(
+    title = "Price Increases For Important Items in 2025",
+    subtitle = "BLS, CPI: Average Price Data. Not Seasonally Adjusted.",
+    caption = "Mike Konczal, Economic Security Project."
+  )
 
 
-avg_prices %>%
-  filter(area_code == "0000", year >= 2024,
-item_name == "Coffee, 100%, ground roast, all sizes, per lb. (453.6 gm)") %>%
-  ggplot(aes(date, value)) + geom_line()
+ggsave(
+  "graphics/high_prices.png",
+  dpi = "retina",
+  width = 12,
+  height = 6.75,
+  units = "in"
+)

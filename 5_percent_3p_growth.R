@@ -92,3 +92,22 @@ cpi %>% filter(item_name %in% lowest$item_name, !is.na(Pchange1), date > "2012-0
   )
 
 ggsave("graphics/three_percent_faceted.png", dpi="retina", width = 12, height=6.75, units = "in")
+
+
+cpi %>% filter(item_name %in% lowest$item_name, !is.na(Pchange12), date >= "2013-01-01") %>% mutate(p12 = (Pchange12 < 0.00)) %>%
+  left_join(lowest, by = "item_name") %>%
+  group_by(date) %>%
+  summarize(total_12 = sum(p12)/n()) %>% ungroup() %>%
+  ggplot(aes(date, y = total_12)) + geom_line(size=1, color=esp_navy) +
+  labs(y = NULL,
+       x = NULL,
+       title = "Percent of Items With Negative Price Growth is Falling Rapidly in 2025",
+       subtitle = "Percent of 140 distinct CPI items having a negative year-over-year price increase.",
+       caption ="BLS, CPI, only seasonally adjusted items included. Author's calculation. Mike Konczal.") +
+  scale_y_continuous(labels = percent) +
+  theme_esp() +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80")
+  )
+
+ggsave("graphics/percent_negative.png", dpi="retina", width = 12, height=6.75, units = "in")

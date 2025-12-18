@@ -11,7 +11,8 @@ trump_targets <- c(
   "Apparel",
   "Household furnishings and supplies",
   "Laundry equipment",
-  "Audio equipment"
+  "Audio equipment",
+  "Apparel"
 )
 
 start_trump_year <- 2017
@@ -87,7 +88,7 @@ ggsave("graphics/t2_worst_12_price_increases.png", dpi="retina", width = 12, hei
 cpi_goods %>%
   filter(year(date) >= 2023,
          item_name %in% trump_targets) %>%
-  filter(item_name != "Apparel") %>%
+  #filter(item_name != "Apparel") %>%
   ggplot(aes(date, value)) +
   geom_line(color = esp_navy, size = 1.2) +
   geom_line(aes(y = trendline), linetype = "dashed", color = esp_navy, size = 1) +
