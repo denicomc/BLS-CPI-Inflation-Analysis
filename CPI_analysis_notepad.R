@@ -36,19 +36,22 @@ items <- GET("https://download.bls.gov/pub/time.series/cu/cu.item", user_agent("
 series <- inner_join(series, items, by = c("item_code"))
 cpi_data <- inner_join(cpi_data, series, by = c("series_id"))
 
+cpi_weights <- read_csv(file = "weights/inflation_weights.csv") %>% select(-year_weight)
 #cpi_weights <- read_csv(file = "data/inflation_weights.csv") %>% select(-year_weight)
-cpi_weights <- read_csv(file = "~/Downloads/inflation_weights.csv") %>% select(-year_weight)
+#cpi_weights <- read_csv(file = "~/Downloads/inflation_weights.csv") %>% select(-year_weight)
 
 cpi_data <- inner_join(cpi_data, cpi_weights, by = c("item_name"))
 #cpi_weights <- read_csv(file = "data/inflation_weights_2023.csv") %>% select(item_name, weight_2023 = weight, year = year_weight)
-cpi_weights <- read_csv(file = "~/Downloads/inflation_weights_2023.csv") %>% select(item_name, weight_2023 = weight, year = year_weight)
+#cpi_weights <- read_csv(file = "~/Downloads/inflation_weights_2023.csv") %>% select(item_name, weight_2023 = weight, year = year_weight)
+cpi_weights <- read_csv(file = "~/weights/inflation_weights_2023.csv") %>% select(item_name, weight_2023 = weight, year = year_weight)
 cpi_data <- left_join(cpi_data, cpi_weights, by = c("item_name", "year"))
 
 cpi_data$weight <- ifelse(!is.na(cpi_data$weight_2023),cpi_data$weight_2023,cpi_data$weight)
 
 ### Make the graphic ###
 #median_terms <- read_csv("data/mediancpi_component_table.csv") %>% mutate(item_name = Component)
-median_terms <- read_csv("~/Downloads/mediancpi_component_table.csv") %>% mutate(item_name = Component)
+#median_terms <- read_csv("~/Downloads/mediancpi_component_table.csv") %>% mutate(item_name = Component)
+median_terms <- read_csv("~/weights/mediancpi_component_table.csv") %>% mutate(item_name = Component)
 
 median <- cpi_data %>%  filter(item_name %in% median_terms$item_name | item_name == "Owners' equivalent rent of residences") %>%
   filter(period != "M13", seasonal == "S") %>%
