@@ -1,0 +1,238 @@
+---
+title: "CPI Inflation Distribution Ridgeline Plot"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Setup
+
+This notebook fetches live CPI data from the BLS public API and renders a trimmed distribution ridgeline plot. No API key required.
+
+```{r install, eval=FALSE}
+# Run this cell only once to install packages
+install.packages(c(
+  "tidyverse", "httr", "data.table", "magrittr",
+  "ggridges", "lubridate", "janitor", "viridis", "scales"
+))
+```
+
+```{r libraries}
+library(tidyverse)
+library(httr)
+library(data.table)
+library(magrittr)
+library(ggridges)
+library(lubridate)
+library(janitor)
+library(viridis)
+library(scales)
+```
+
+---
+
+## Parameters (edit these)
+
+```{r params}
+# How far back to show on the chart (must be YYYY-MM-DD format)
+chart_start_date <- "2018-06-01"
+
+# Trim percentage (e.g. 0.15 trims bottom 15% and top 15%)
+trim_lower <- 0.15
+trim_upper <- 0.85
+
+# How many quarters back to show (e.g. 4 = last 4 quarterly observations)
+n_quarters <- 10
+```
+
+---
+
+## Load CPI Data from BLS
+
+```{r load_data}
+user_email <- "rortybomb@gmail.com"  # BLS requests a contact email in the user-agent
+
+cpi_data <- GET(
+  "https://download.bls.gov/pub/time.series/cu/cu.data.0.Current",
+  user_agent(user_email)
+) %>%
+  content(as = "text") %>%
+  fread()
+
+cpi_data <- cpi_data %>%
+  clean_names() %>%
+  mutate(
+    value = as.numeric(value),
+    date  = as.Date(
+      paste(substr(period, 2, 3), "01", substr(year, 3, 4), sep = "/"),
+      "%m/%d/%y"
+    )
+  )
+```
+
+## Load Series & Item Metadata
+
+```{r load_series}
+series <- GET(
+  "https://download.bls.gov/pub/time.series/cu/cu.series",
+  user_agent(user_email)
+) %>%
+  content(as = "text") %>%
+  fread() %>%
+  clean_names()
+
+items <- GET(
+  "https://download.bls.gov/pub/time.series/cu/cu.item",
+  user_agent(user_email)
+) %>%
+  content(as = "text") %>%
+  fread()
+
+series <- inner_join(series, items, by = "item_code")
+
+cpi_data <- cpi_data %>%
+  mutate(series_id = trimws(series_id)) %>%
+  inner_join(series, by = "series_id")
+```
+
+## Load Weights from BLS (no local files needed)
+
+Binder has no local filesystem for your CSVs, so weights are fetched directly from the BLS supplemental files.
+
+```{r load_weights}
+# Primary weights
+cpi_weights_url <- "https://download.bls.gov/pub/time.series/cu/cu.weights"
+
+cpi_weights_raw <- GET(cpi_weights_url, user_agent(user_email)) %>%
+  content(as = "text") %>%
+  fread() %>%
+  clean_names()
+
+# The BLS weights file has: series_id, year, weight
+# Join by series_id + year to attach weights
+cpi_weights_joined <- cpi_weights_raw %>%
+  mutate(series_id = trimws(series_id))
+
+cpi_data <- left_join(cpi_data, cpi_weights_joined, by = c("series_id", "year"))
+```
+
+## Load Median CPI Components
+
+The Cleveland Fed's median CPI component list is replicated inline so no local file is needed.
+
+```{r median_components}
+# Standard Cleveland Fed median CPI components (as of 2024 weights revision)
+# Update this vector if the Fed revises the component list
+median_component_names <- c(
+  "Airline fares",
+  "Alcoholic beverages at home",
+  "Alcoholic beverages away from home",
+  "Apparel",
+  "Car and truck rental",
+  "Education",
+  "Food away from home",
+  "Food at home",
+  "Fuels and utilities",
+  "Household furnishings and operations",
+  "Household operations",
+  "Housekeeping supplies",
+  "Infants' and toddlers' apparel",
+  "Intracity transportation",
+  "Jewelry and watches",
+  "Medical care commodities",
+  "Medical care services",
+  "Men's and boys' apparel",
+  "Motor vehicle insurance",
+  "Motor vehicle maintenance and repair",
+  "New vehicles",
+  "Other goods",
+  "Other personal services",
+  "Other services",
+  "Personal care",
+  "Pet services including veterinary",
+  "Public transportation",
+  "Recreation",
+  "Rent of primary residence",
+  "Shelter",
+  "Tobacco and smoking products",
+  "Used cars and trucks",
+  "Video and audio",
+  "Water and sewer and trash collection services",
+  "Women's and girls' apparel"
+)
+```
+
+---
+
+## Compute Trimmed Distribution
+
+```{r compute_median}
+start_month <- month(max(cpi_data$date, na.rm = TRUE))
+quarters    <- ((seq(start_month, start_month + n_quarters - 1, by = 1) - 1) %% 12) + 1
+
+median_df <- cpi_data %>%
+  filter(
+    item_name %in% median_component_names |
+    item_name == "Owners' equivalent rent of residences"
+  ) %>%
+  filter(period != "M13", seasonal == "S") %>%
+  arrange(date) %>%
+  group_by(item_name) %>%
+  mutate(Pchange3 = value / lag(value, 1) - 1) %>%
+  ungroup() %>%
+  group_by(date) %>%
+  mutate(
+    normalized = sum(weight, na.rm = TRUE),
+    weightN    = weight / normalized
+  ) %>%
+  arrange(Pchange3) %>%
+  mutate(
+    cumsum  = cumsum(weight) / 100,
+    cumsumN = cumsum(weightN)
+  ) %>%
+  ungroup() %>%
+  mutate(Pchange3a = (1 + Pchange3)^12 - 1)
+```
+
+---
+
+## Plot
+
+```{r plot, fig.width=11, fig.height=9}
+median_df %>%
+  mutate(dateF = as.factor(date)) %>%
+  filter(cumsumN <= trim_upper, cumsumN >= trim_lower) %>%
+  filter(date >= as.Date(chart_start_date)) %>%
+  filter(month(date) %in% quarters) %>%
+  mutate(
+    monthC  = format(date, "%B, %Y"),
+    monthC  = fct_reorder(monthC, date),
+    monthCR = fct_rev(monthC)
+  ) %>%
+  ggplot(aes(x = Pchange3a, y = monthCR, fill = after_stat(x))) +
+  geom_density_ridges_gradient() +
+  scale_fill_viridis(option = "H") +
+  theme_ridges() +
+  theme(legend.position = "none") +
+  scale_x_continuous(labels = percent) +
+  labs(
+    title    = "CPI Inflation Report: Distribution Ridgeline Plot",
+    subtitle = paste0(
+      "Trimmed distribution: dropping bottom ", trim_lower * 100,
+      "% and top ", (1 - trim_upper) * 100, "% by weight"
+    ),
+    x       = "One Annualized Month Percent Change",
+    y       = "",
+    caption = "OER is treated as one value. h/t Mike Konczal"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title    = element_text(size = 20, margin = margin(0, 0, 5, 0)),
+    plot.subtitle = element_text(size = 13),
+    plot.caption  = element_text(size = 10, face = "italic"),
+    axis.text.y   = element_text(size = 12, face = "bold"),
+    axis.text.x   = element_text(size = 12)
+  )
+```

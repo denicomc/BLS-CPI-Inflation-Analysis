@@ -1,0 +1,10 @@
+tidyverse
+httr
+data.table
+magrittr
+ggridges
+lubridate
+janitor
+viridis
+scales
+shiny
