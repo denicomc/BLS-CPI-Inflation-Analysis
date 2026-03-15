@@ -99,23 +99,28 @@ cpi_data <- cpi_data %>%
 
 ## Load Weights from BLS (no local files needed)
 
-Binder has no local filesystem for your CSVs, so weights are fetched directly from the BLS supplemental files.
+Weights come from the BLS `cu.aspect` file, which publishes annual relative importance values
+(aspect type `I1` = end-of-year relative importance). We extract the U.S. city average,
+seasonally-unadjusted series for each year and join them to `cpi_data` via `series_id`.
 
 ```{r load_weights}
-# Primary weights
-cpi_weights_url <- "https://download.bls.gov/pub/time.series/cu/cu.weights"
-
-cpi_weights_raw <- GET(cpi_weights_url, user_agent(user_email)) %>%
+# cu.aspect columns: series_id, year, period, aspect_type, value, footnote_codes
+aspect_raw <- GET(
+  "https://download.bls.gov/pub/time.series/cu/cu.aspect",
+  user_agent(user_email)
+) %>%
   content(as = "text") %>%
   fread() %>%
-  clean_names()
-
-# The BLS weights file has: series_id, year, weight
-# Join by series_id + year to attach weights
-cpi_weights_joined <- cpi_weights_raw %>%
+  clean_names() %>%
   mutate(series_id = trimws(series_id))
 
-cpi_data <- left_join(cpi_data, cpi_weights_joined, by = c("series_id", "year"))
+# Keep only end-of-year relative importance (I1) as the weight proxy
+cpi_weights <- aspect_raw %>%
+  filter(aspect_type == "I1") %>%
+  select(series_id, year, weight = value) %>%
+  mutate(weight = as.numeric(weight))
+
+cpi_data <- left_join(cpi_data, cpi_weights, by = c("series_id", "year"))
 ```
 
 ## Load Median CPI Components

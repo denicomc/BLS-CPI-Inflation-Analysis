@@ -60,11 +60,16 @@ load_cpi_data <- function() {
 
   series <- inner_join(series, items, by = "item_code")
 
+  # cu.aspect contains end-of-year relative importance (aspect_type "I1")
+  # This is the correct public BLS weights source; cu.weights does not exist
   cpi_weights <- GET(
-    "https://download.bls.gov/pub/time.series/cu/cu.weights",
+    "https://download.bls.gov/pub/time.series/cu/cu.aspect",
     user_agent(USER_AGENT)
   ) %>% content(as = "text") %>% fread() %>% clean_names() %>%
-    mutate(series_id = trimws(series_id))
+    mutate(series_id = trimws(series_id)) %>%
+    filter(aspect_type == "I1") %>%
+    select(series_id, year, weight = value) %>%
+    mutate(weight = as.numeric(weight))
 
   cpi_data <- cpi_data %>%
     mutate(series_id = trimws(series_id)) %>%
