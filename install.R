@@ -8,3 +8,4 @@ janitor
 viridis
 scales
 shiny
+hrbrthemes
