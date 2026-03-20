@@ -1,3 +1,11 @@
+# =============================================================================
+# CPI Inflation — Distribution Ridgeline Explorer
+# Data: U.S. Bureau of Labor Statistics (live, no API key required)
+# Method: 30%-trimmed distribution of CPI components, h/t Mike Konczal
+# Weights: BLS cu.aspect relative importance, collapsed to item_name + year
+#          so seasonally-adjusted series receive the correct weight
+# =============================================================================
+
 library(shiny)
 library(tidyverse)
 library(httr)
@@ -9,192 +17,231 @@ library(janitor)
 library(viridis)
 library(scales)
 
-# ── Cleveland Fed median CPI components ───────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Cleveland Fed median CPI component list
+# These are the items used to compute the trimmed-mean / median CPI.
+# OER is kept separate and optionally included as a single series.
+# -----------------------------------------------------------------------------
 MEDIAN_COMPONENTS <- c(
-  "Airline fares", "Alcoholic beverages at home",
-  "Alcoholic beverages away from home", "Apparel", "Car and truck rental",
-  "Education", "Food away from home", "Food at home", "Fuels and utilities",
-  "Household furnishings and operations", "Household operations",
-  "Housekeeping supplies", "Infants' and toddlers' apparel",
-  "Intracity transportation", "Jewelry and watches",
-  "Medical care commodities", "Medical care services",
-  "Men's and boys' apparel", "Motor vehicle insurance",
-  "Motor vehicle maintenance and repair", "New vehicles", "Other goods",
-  "Other personal services", "Other services", "Personal care",
-  "Pet services including veterinary", "Public transportation", "Recreation",
-  "Rent of primary residence", "Shelter", "Tobacco and smoking products",
-  "Used cars and trucks", "Video and audio",
-  "Water and sewer and trash collection services", "Women's and girls' apparel"
+  "Airline fares",
+  "Alcoholic beverages at home",
+  "Alcoholic beverages away from home",
+  "Apparel",
+  "Car and truck rental",
+  "Education",
+  "Food away from home",
+  "Food at home",
+  "Fuels and utilities",
+  "Household furnishings and operations",
+  "Household operations",
+  "Housekeeping supplies",
+  "Infants' and toddlers' apparel",
+  "Intracity transportation",
+  "Jewelry and watches",
+  "Medical care commodities",
+  "Medical care services",
+  "Men's and boys' apparel",
+  "Motor vehicle insurance",
+  "Motor vehicle maintenance and repair",
+  "New vehicles",
+  "Other goods",
+  "Other personal services",
+  "Other services",
+  "Personal care",
+  "Pet services including veterinary",
+  "Public transportation",
+  "Recreation",
+  "Rent of primary residence",
+  "Shelter",
+  "Tobacco and smoking products",
+  "Used cars and trucks",
+  "Video and audio",
+  "Water and sewer and trash collection services",
+  "Women's and girls' apparel"
 )
 
-USER_AGENT <- "rortybomb@gmail.com"
+BLS_EMAIL <- "rortybomb@gmail.com"  # BLS requests a contact email in user-agent
 
+# -----------------------------------------------------------------------------
+# Data loading
+# Fetches three BLS files and one aspect/weights file, then joins them.
+# Result is cached in cpi_env so Binder doesn't re-fetch on every interaction.
+# -----------------------------------------------------------------------------
 load_cpi_data <- function() {
+
+  fetch_bls <- function(url) {
+    GET(url, user_agent(BLS_EMAIL)) %>%
+      content(as = "text") %>%
+      fread() %>%
+      clean_names()
+  }
+
   message("Fetching CPI observations...")
-  cpi_data <- GET(
-    "https://download.bls.gov/pub/time.series/cu/cu.data.0.Current",
-    user_agent(USER_AGENT)
-  ) %>%
-    content(as = "text") %>%
-    fread() %>%
-    clean_names() %>%
+  cpi <- fetch_bls("https://download.bls.gov/pub/time.series/cu/cu.data.0.Current") %>%
     mutate(
-      value     = as.numeric(value),
       series_id = trimws(series_id),
+      value     = suppressWarnings(as.numeric(value)),
       date      = as.Date(
         paste(substr(period, 2, 3), "01", substr(year, 3, 4), sep = "/"),
         "%m/%d/%y"
       )
     )
 
-  message("Fetching series metadata...")
-  series <- GET(
-    "https://download.bls.gov/pub/time.series/cu/cu.series",
-    user_agent(USER_AGENT)
-  ) %>% content(as = "text") %>% fread() %>% clean_names() %>%
+  message("Fetching series + item metadata...")
+  series <- fetch_bls("https://download.bls.gov/pub/time.series/cu/cu.series") %>%
     mutate(series_id = trimws(series_id))
 
-  items <- GET(
-    "https://download.bls.gov/pub/time.series/cu/cu.item",
-    user_agent(USER_AGENT)
-  ) %>% content(as = "text") %>% fread() %>% clean_names()
+  items <- fetch_bls("https://download.bls.gov/pub/time.series/cu/cu.item")
 
+  # Attach item_name to series via item_code
   series <- left_join(series, items, by = "item_code")
 
-  # ── Weights via cu.aspect with full fallback chain ───────────────────────────
-  # Strategy 1: aspect_type "I1" (end-of-year relative importance)
-  # Strategy 2: aspect_type "R1" (alternate code in some BLS vintages)
-  # Strategy 3: whichever aspect_type has the most non-NA numeric rows
-  # Strategy 4: equal weights = 1 so the plot always renders
-  message("Fetching aspect/weights...")
-  cpi_weights <- tryCatch({
-    aspect_raw <- GET(
-      "https://download.bls.gov/pub/time.series/cu/cu.aspect",
-      user_agent(USER_AGENT)
-    ) %>% content(as = "text") %>% fread() %>% clean_names() %>%
-      mutate(series_id = trimws(series_id),
-             value     = suppressWarnings(as.numeric(value)))
+  # ---------------------------------------------------------------------------
+  # Weights from cu.aspect (relative importance)
+  # aspect_type "I1" = end-of-year relative importance (preferred)
+  # Fallback chain: I1 -> R1 -> most-populated type -> equal weights
+  #
+  # Key insight: BLS only publishes aspect weights for UNADJUSTED series ("U").
+  # Seasonally-adjusted series ("S") share the same item_name but have a
+  # different series_id, so joining by series_id alone misses them.
+  # Solution: collapse weights to item_name + year (mean across variants)
+  # so both adjusted and unadjusted series receive the correct weight.
+  # ---------------------------------------------------------------------------
+  message("Fetching weights from cu.aspect...")
+  weights <- tryCatch({
 
-    message("Aspect cols:  ", paste(names(aspect_raw), collapse = ", "))
-    message("Aspect types: ", paste(unique(aspect_raw$aspect_type), collapse = ", "))
+    aspect <- fetch_bls("https://download.bls.gov/pub/time.series/cu/cu.aspect") %>%
+      mutate(
+        series_id = trimws(series_id),
+        value     = suppressWarnings(as.numeric(value))
+      )
 
-    w <- aspect_raw %>% filter(aspect_type == "I1")
+    # Select best available aspect_type
+    w <- aspect %>% filter(aspect_type == "I1")
+    if (nrow(w) == 0) w <- aspect %>% filter(aspect_type == "R1")
     if (nrow(w) == 0) {
-      message("I1 empty - trying R1...")
-      w <- aspect_raw %>% filter(aspect_type == "R1")
-    }
-    if (nrow(w) == 0) {
-      best_type <- aspect_raw %>%
-        filter(!is.na(value)) %>%
-        count(aspect_type) %>%
-        slice_max(n, n = 1, with_ties = FALSE) %>%
+      best <- aspect %>% filter(!is.na(value)) %>%
+        count(aspect_type) %>% slice_max(n, n = 1, with_ties = FALSE) %>%
         pull(aspect_type)
-      message("Falling back to aspect_type: ", best_type)
-      w <- aspect_raw %>% filter(aspect_type == best_type)
+      w <- aspect %>% filter(aspect_type == best)
+      message("Used fallback aspect_type: ", best)
     }
-    # Aspect weights live on UNADJUSTED series (seasonal=="U"). Seasonally
-    # adjusted series share the same item_name but different series_id, so a
-    # series_id join misses them entirely. Collapse to item_name + year so both
-    # adjusted and unadjusted series get the same weight.
+
     w %>%
+      filter(!is.na(value)) %>%
       select(series_id, year, weight = value) %>%
-      filter(!is.na(weight)) %>%
       left_join(series %>% select(series_id, item_name), by = "series_id") %>%
       filter(!is.na(item_name)) %>%
       group_by(item_name, year) %>%
       summarise(weight = mean(weight, na.rm = TRUE), .groups = "drop")
+
   }, error = function(e) {
-    message("Aspect fetch failed: ", e$message)
+    message("Weight fetch failed (", e$message, ") — using equal weights")
     tibble(item_name = character(), year = integer(), weight = numeric())
   })
 
-  message("Weight rows after item_name collapse: ", nrow(cpi_weights))
+  # Join everything together
+  cpi <- cpi %>%
+    inner_join(series,  by = "series_id") %>%
+    left_join(weights,  by = c("item_name", "year"))
 
-  cpi_data <- cpi_data %>%
-    inner_join(series,     by = "series_id") %>%
-    left_join(cpi_weights, by = c("item_name", "year"))
-
-  # Final fallback: if all weights are still NA, use equal weights.
-  # Trimmed mean becomes an unweighted trim — still valid, just note it.
-  if (sum(!is.na(cpi_data$weight)) == 0) {
-    message("WARNING: all weights NA - falling back to equal weights (unweighted trim)")
-    cpi_data <- cpi_data %>% mutate(weight = 1)
+  # Last-resort fallback: equal weights keep the plot running even if
+  # the aspect file changes structure or becomes unavailable
+  if (all(is.na(cpi$weight))) {
+    message("WARNING: all weights NA — using equal weights (unweighted trim)")
+    cpi <- cpi %>% mutate(weight = 1)
   }
 
-  message("Final rows: ", nrow(cpi_data),
-          " | with weight: ", sum(!is.na(cpi_data$weight)),
-          " | unique items: ", n_distinct(cpi_data$item_name))
-  cpi_data
+  message(sprintf(
+    "Load complete: %s rows | %s with weight | %s unique items",
+    nrow(cpi), sum(!is.na(cpi$weight)), n_distinct(cpi$item_name)
+  ))
+  cpi
 }
 
-cpi_env <- new.env()
+cpi_cache <- new.env(parent = emptyenv())
 
-# ── UI ────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# UI
+# -----------------------------------------------------------------------------
 ui <- fluidPage(
+
   tags$head(tags$style(HTML("
-    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-           background: #0d1117; color: #e6edf3; }
-    .well { background: #161b22; border: 1px solid #30363d; border-radius: 6px; }
-    h2   { color: #f0f6fc; font-weight: 700; letter-spacing: -0.5px; }
-    .control-label { color: #8b949e; font-size: 12px; font-weight: 600;
-                     text-transform: uppercase; letter-spacing: 0.5px; }
-    .irs--shiny .irs-bar { background: #1f6feb; border-color: #1f6feb; }
+    body            { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                      background: #0d1117; color: #e6edf3; }
+    .well           { background: #161b22; border: 1px solid #30363d; border-radius: 6px; }
+    h2              { color: #f0f6fc; font-weight: 700; letter-spacing: -0.5px; }
+    .control-label  { color: #8b949e; font-size: 12px; font-weight: 600;
+                      text-transform: uppercase; letter-spacing: 0.5px; }
+    .irs--shiny .irs-bar    { background: #1f6feb; border-color: #1f6feb; }
     .irs--shiny .irs-handle { background: #58a6ff; border-color: #58a6ff; }
-    hr  { border-color: #30363d; }
-    .btn-primary { background: #238636; border-color: #2ea043; }
+    hr              { border-color: #30363d; }
+    .btn-primary    { background: #238636; border-color: #2ea043; }
     .btn-primary:hover { background: #2ea043; }
-    #status_msg { color: #8b949e; font-size: 12px; margin-top: 6px; }
-    pre { background: #161b22 !important; color: #8b949e !important;
-          font-size: 11px; border: 1px solid #30363d; }
+    #status_msg     { color: #8b949e; font-size: 12px; margin-top: 6px; }
+    pre             { background: #161b22 !important; color: #8b949e !important;
+                      font-size: 11px; border: 1px solid #30363d; }
   "))),
 
   titlePanel(div(
-    h2("CPI Inflation - Distribution Ridgeline Explorer"),
+    h2("CPI Inflation \u2014 Distribution Ridgeline Explorer"),
     tags$p(style = "color:#8b949e; font-size:13px; margin-top:-10px;",
-           "Live BLS data - h/t Mike Konczal")
+           "Live BLS data \u00b7 h/t Mike Konczal")
   )),
 
   sidebarLayout(
+
     sidebarPanel(
       width = 3,
 
-      tags$b("DATE RANGE", style = "color:#8b949e; font-size:11px;"),
-      hr(style = "margin: 6px 0;"),
+      # -- Date & display -------------------------------------------------------
+      tags$b("DATE & DISPLAY", style = "color:#8b949e; font-size:11px;"),
+      hr(style = "margin:6px 0;"),
       dateInput("start_date", "Chart Start Date",
                 value = "2018-06-01", min = "2000-01-01"),
-      sliderInput("n_quarters", "Number of Observations",
-                  min = 1, max = 84, value = 48, step = 1),
+      sliderInput("n_months", "Months to Show",
+                  min = 1, max = 84, value = 24, step = 1),
       sliderInput("plot_height", "Plot Height (px)",
                   min = 300, max = 3000, value = 1800, step = 20),
 
+      # -- Trim -----------------------------------------------------------------
       tags$b("DISTRIBUTION TRIM",
              style = "color:#8b949e; font-size:11px; margin-top:16px; display:block;"),
-      hr(style = "margin: 6px 0;"),
+      hr(style = "margin:6px 0;"),
       sliderInput("trim_pct", "Trim Each Tail (% by weight)",
                   min = 0, max = 49, value = 29, step = 1, post = "%"),
 
+      # -- Appearance -----------------------------------------------------------
       tags$b("APPEARANCE",
              style = "color:#8b949e; font-size:11px; margin-top:16px; display:block;"),
-      hr(style = "margin: 6px 0;"),
+      hr(style = "margin:6px 0;"),
       selectInput("color_palette", "Color Palette",
-                  choices = c("Turbo (default)" = "H", "Inferno" = "B",
-                              "Plasma" = "C", "Viridis" = "D",
-                              "Magma" = "A", "Cividis" = "E"),
-                  selected = "H"),
-      selectInput("x_axis_range", "X-Axis Range",
-                  choices = c("Auto" = "auto", "+-10%" = "10",
-                              "+-20%" = "20", "+-30%" = "30"),
-                  selected = "auto"),
-      checkboxInput("show_zero", "Show zero-line", value = TRUE),
-      checkboxInput("show_2pct", "Show 2% target line", value = TRUE),
+                  choices = c(
+                    "Turbo (default)" = "H",
+                    "Inferno"         = "B",
+                    "Plasma"          = "C",
+                    "Viridis"         = "D",
+                    "Magma"           = "A",
+                    "Cividis"         = "E"
+                  ), selected = "H"),
+      selectInput("x_range", "X-Axis Range",
+                  choices = c(
+                    "Auto"   = "auto",
+                    "\u00b110%" = "10",
+                    "\u00b120%" = "20",
+                    "\u00b130%" = "30"
+                  ), selected = "auto"),
+      checkboxInput("show_zero", "Show 0% reference line",  value = TRUE),
+      checkboxInput("show_2pct", "Show 2% target line",     value = TRUE),
 
+      # -- Components -----------------------------------------------------------
       tags$b("COMPONENTS",
              style = "color:#8b949e; font-size:11px; margin-top:16px; display:block;"),
-      hr(style = "margin: 6px 0;"),
+      hr(style = "margin:6px 0;"),
       checkboxInput("include_oer", "Include OER as single component", value = TRUE),
 
       hr(),
-      actionButton("refresh", "Refresh BLS Data",
+      actionButton("refresh", "\u21ba  Refresh BLS Data",
                    class = "btn-primary", width = "100%"),
       div(id = "status_msg", textOutput("status")),
       hr(),
@@ -203,18 +250,17 @@ ui <- fluidPage(
 
     mainPanel(
       width = 9,
-      uiOutput("error_msg"),
-      uiOutput("ridgeline_container"),
+      uiOutput("error_banner"),
+      uiOutput("plot_container"),
       hr(style = "border-color:#30363d;"),
       fluidRow(
         column(4, verbatimTextOutput("stats_box")),
-        column(8,
-          tags$p(style = "color:#8b949e; font-size:12px; margin-top:10px;",
-            "Tip: Narrowing the trim removes outlier categories and reveals where
-             the core of price changes is clustering. A tighter distribution
-             (sharper ridge) means more categories are inflating at a similar rate."
-          )
-        )
+        column(8, tags$p(
+          style = "color:#8b949e; font-size:12px; margin-top:10px;",
+          "Tip: Narrowing the trim removes outlier categories and reveals where
+           the core of price changes is clustering. A tighter ridge means more
+           categories are inflating at a similar rate."
+        ))
       ),
       conditionalPanel(
         condition = "input.show_debug == true",
@@ -226,88 +272,88 @@ ui <- fluidPage(
   )
 )
 
-# ── Server ────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Server
+# -----------------------------------------------------------------------------
 server <- function(input, output, session) {
 
+  # -- Data load ---------------------------------------------------------------
   raw_data <- eventReactive(input$refresh, {
-    withProgress(message = "Fetching BLS data...", value = 0.5, {
+    withProgress(message = "Fetching BLS data\u2026", value = 0.5, {
       tryCatch(load_cpi_data(), error = function(e) {
-        message("Load error: ", e$message); NULL
+        message("Load error: ", e$message)
+        NULL
       })
     })
   }, ignoreNULL = FALSE)
 
+  # -- Filtered / computed dataset for plotting --------------------------------
   plot_data <- reactive({
     req(raw_data())
-    cpi <- raw_data()
-
-    trim_lo <- input$trim_pct / 100
-    trim_hi <- 1 - trim_lo
-
-    start_month <- month(max(cpi$date, na.rm = TRUE))
-    quarters    <- ((seq(start_month, start_month + input$n_quarters - 1) - 1) %% 12) + 1
-
+    cpi         <- raw_data()
+    trim_lo     <- input$trim_pct / 100
+    trim_hi     <- 1 - trim_lo
     include_oer <- input$include_oer
 
-    df <- cpi %>%
+    # Build the set of months to display: n_months counting back from the
+    # most recent month in the data
+    latest_month <- month(max(cpi$date, na.rm = TRUE))
+    show_months  <- ((seq(latest_month, latest_month + input$n_months - 1) - 1) %% 12) + 1
+
+    cpi %>%
       filter(
         item_name %in% MEDIAN_COMPONENTS |
         (include_oer & item_name == "Owners' equivalent rent of residences")
       ) %>%
-      filter(period != "M13", seasonal == "S") %>%
+      filter(period != "M13", trimws(seasonal) == "S") %>%
       arrange(date) %>%
       group_by(item_name) %>%
-      mutate(Pchange3 = value / lag(value, 1) - 1) %>%
+      mutate(mom_chg = value / lag(value, 1) - 1) %>%   # month-over-month change
       ungroup() %>%
       group_by(date) %>%
       mutate(
-        normalized = sum(weight, na.rm = TRUE),
-        weightN    = if_else(normalized > 0, weight / normalized, NA_real_)
+        weight_sum = sum(weight, na.rm = TRUE),
+        weight_n   = if_else(weight_sum > 0, weight / weight_sum, NA_real_)
       ) %>%
-      arrange(Pchange3) %>%
-      mutate(
-        cumsumN = cumsum(replace_na(weightN, 0))
-      ) %>%
+      arrange(mom_chg) %>%
+      mutate(cumwt = cumsum(replace_na(weight_n, 0))) %>%
       ungroup() %>%
-      mutate(Pchange3a = (1 + Pchange3)^12 - 1) %>%
-      filter(cumsumN >= trim_lo, cumsumN <= trim_hi) %>%
+      mutate(ann_chg = (1 + mom_chg)^12 - 1) %>%        # annualised
+      filter(cumwt >= trim_lo, cumwt <= trim_hi) %>%
       filter(date >= as.Date(input$start_date)) %>%
-      filter(month(date) %in% quarters) %>%
-      filter(!is.na(Pchange3a)) %>%
+      filter(month(date) %in% show_months) %>%
+      filter(!is.na(ann_chg)) %>%
       mutate(
-        monthC  = format(date, "%B, %Y"),
-        monthC  = fct_reorder(monthC, date),
-        monthCR = fct_rev(monthC)
+        month_label = fct_rev(fct_reorder(format(date, "%B, %Y"), date))
       )
-
-    df
   })
 
-  output$error_msg <- renderUI({
-    df <- tryCatch(plot_data(), error = function(e) e)
-    if (inherits(df, "error")) {
+  # -- Error / empty-data banner -----------------------------------------------
+  output$error_banner <- renderUI({
+    result <- tryCatch(plot_data(), error = function(e) e)
+    if (inherits(result, "error")) {
       div(style = "color:#f85149; padding:12px; background:#2d1b1b;
                    border:1px solid #f85149; border-radius:4px; margin-bottom:12px;",
-          strong("Plot error: "), df$message)
-    } else if (nrow(df) == 0) {
+          strong("Error: "), result$message)
+    } else if (nrow(result) == 0) {
       div(style = "color:#e3b341; padding:12px; background:#2d2208;
                    border:1px solid #e3b341; border-radius:4px; margin-bottom:12px;",
           strong("No data to plot. "),
-          "Check the debug panel — weights may all be NA or component names
-           may not match BLS item_name values.")
+          "Enable the debug panel to diagnose which filter is removing all rows.")
     }
   })
 
-  output$ridgeline_container <- renderUI({
+  # -- Dynamic plot height -----------------------------------------------------
+  output$plot_container <- renderUI({
     plotOutput("ridgeline", height = paste0(input$plot_height, "px"))
   })
 
+  # -- Main ridgeline plot -----------------------------------------------------
   output$ridgeline <- renderPlot({
     df <- plot_data()
     validate(need(nrow(df) > 0, ""))
 
-    p <- df %>%
-      ggplot(aes(x = Pchange3a, y = monthCR, fill = after_stat(x))) +
+    p <- ggplot(df, aes(x = ann_chg, y = month_label, fill = after_stat(x))) +
       geom_density_ridges_gradient(scale = 1.5, rel_min_height = 0.01) +
       scale_fill_viridis(option = input$color_palette) +
       theme_ridges(grid = TRUE) +
@@ -315,11 +361,12 @@ server <- function(input, output, session) {
       labs(
         title    = "CPI Inflation Report: Distribution Ridgeline Plot",
         subtitle = sprintf(
-          "Trimmed distribution - dropping bottom %d%% and top %d%% by weight",
-          input$trim_pct, input$trim_pct),
-        x       = "One Annualized Month Percent Change",
-        y       = "",
-        caption = "OER treated as one value - h/t Mike Konczal - Data: BLS"
+          "Trimmed distribution \u2014 dropping bottom %d%% and top %d%% by weight",
+          input$trim_pct, input$trim_pct
+        ),
+        x       = "One-Month Change, Annualised",
+        y       = NULL,
+        caption = "OER treated as one value \u00b7 h/t Mike Konczal \u00b7 Source: BLS"
       ) +
       theme(
         plot.background     = element_rect(fill = "#0d1117", color = NA),
@@ -330,117 +377,110 @@ server <- function(input, output, session) {
                                      margin = margin(0, 0, 5, 0)),
         plot.subtitle = element_text(size = 13, color = "#8b949e"),
         plot.caption  = element_text(size = 10, face = "italic", color = "#8b949e"),
-        axis.text.y   = element_text(size = 12, face = "bold", color = "#e6edf3"),
-        axis.text.x   = element_text(size = 12, color = "#e6edf3"),
+        axis.text.y   = element_text(size = 12, face = "bold",   color = "#e6edf3"),
+        axis.text.x   = element_text(size = 12,                  color = "#e6edf3"),
         panel.grid.major = element_line(color = "#30363d"),
         panel.grid.minor = element_blank()
       )
 
-    if (input$x_axis_range != "auto") {
-      lim <- as.numeric(input$x_axis_range) / 100
-      p <- p + coord_cartesian(xlim = c(-lim, lim))
+    if (input$x_range != "auto") {
+      lim <- as.numeric(input$x_range) / 100
+      p   <- p + coord_cartesian(xlim = c(-lim, lim))
     }
     if (input$show_zero) {
-      p <- p + geom_vline(xintercept = 0, color = "#f85149",
+      p <- p + geom_vline(xintercept = 0,    color = "#f85149",
                           linetype = "dashed", linewidth = 0.7, alpha = 0.8)
     }
     if (input$show_2pct) {
-      p <- p + geom_vline(xintercept = 0.02, color = "#58a6ff",
-                          linetype = "dashed", linewidth = 0.7, alpha = 0.8) +
+      p <- p +
+        geom_vline(xintercept = 0.02,  color = "#58a6ff",
+                   linetype = "dashed", linewidth = 0.7, alpha = 0.8) +
         annotate("text", x = 0.02, y = Inf, label = "2% target",
                  color = "#58a6ff", size = 3.2, hjust = -0.1, vjust = 1.5)
     }
     p
   }, bg = "#0d1117")
 
+  # -- Summary stats -----------------------------------------------------------
   output$stats_box <- renderPrint({
     df <- plot_data()
     req(nrow(df) > 0)
     latest <- df %>% filter(date == max(date))
-    cat("Latest month:         ", format(max(df$date), "%B %Y"), "\n")
-    cat("Components in plot:   ", n_distinct(latest$item_name), "\n")
-    cat("Median annualized:    ",
-        scales::percent(median(latest$Pchange3a, na.rm = TRUE), accuracy = 0.1), "\n")
-    cat("Mean annualized:      ",
-        scales::percent(mean(latest$Pchange3a,   na.rm = TRUE), accuracy = 0.1), "\n")
-    cat("IQR:                  ",
-        scales::percent(IQR(latest$Pchange3a,    na.rm = TRUE), accuracy = 0.1), "\n")
+    cat("Latest month:       ", format(max(df$date), "%B %Y"),      "\n")
+    cat("Components in plot: ", n_distinct(latest$item_name),        "\n")
+    cat("Median annualised:  ",
+        scales::percent(median(latest$ann_chg, na.rm = TRUE), accuracy = 0.1), "\n")
+    cat("Mean annualised:    ",
+        scales::percent(mean(latest$ann_chg,   na.rm = TRUE), accuracy = 0.1), "\n")
+    cat("IQR:                ",
+        scales::percent(IQR(latest$ann_chg,    na.rm = TRUE), accuracy = 0.1), "\n")
   })
 
+  # -- Debug panel -------------------------------------------------------------
   output$debug_out <- renderPrint({
     req(raw_data())
-    cpi <- raw_data()
-
-    include_oer <- input$include_oer
+    cpi         <- raw_data()
     trim_lo     <- input$trim_pct / 100
     trim_hi     <- 1 - trim_lo
-    start_month <- month(max(cpi$date, na.rm = TRUE))
-    quarters    <- ((seq(start_month, start_month + input$n_quarters - 1) - 1) %% 12) + 1
+    include_oer <- input$include_oer
+    latest_month <- month(max(cpi$date, na.rm = TRUE))
+    show_months  <- ((seq(latest_month, latest_month + input$n_months - 1) - 1) %% 12) + 1
 
-    cat("=== STEP-BY-STEP FILTER FUNNEL ===\n\n")
+    cat("=== FILTER FUNNEL ===\n")
 
-    s1 <- cpi %>%
-      filter(
-        item_name %in% MEDIAN_COMPONENTS |
-        (include_oer & item_name == "Owners' equivalent rent of residences")
-      )
-    cat("After component filter:        ", nrow(s1), "rows\n")
+    s1 <- cpi %>% filter(
+      item_name %in% MEDIAN_COMPONENTS |
+      (include_oer & item_name == "Owners' equivalent rent of residences")
+    )
+    cat(sprintf("After component filter:   %d rows\n", nrow(s1)))
 
     s2 <- s1 %>% filter(period != "M13")
-    cat("After period != M13:           ", nrow(s2), "rows\n")
+    cat(sprintf("After period != M13:      %d rows\n", nrow(s2)))
 
-    cat("Unique 'seasonal' values seen: ",
-        paste(unique(trimws(s2$seasonal)), collapse = ", "), "\n")
+    cat(sprintf("Seasonal values present:  %s\n",
+                paste(unique(trimws(s2$seasonal)), collapse = ", ")))
+
     s3 <- s2 %>% filter(trimws(seasonal) == "S")
-    cat("After seasonal == 'S':         ", nrow(s3), "rows\n")
+    cat(sprintf("After seasonal == 'S':    %d rows\n", nrow(s3)))
 
     s4 <- s3 %>%
-      arrange(date) %>%
-      group_by(item_name) %>%
-      mutate(Pchange3 = value / lag(value, 1) - 1) %>%
-      ungroup() %>%
+      arrange(date) %>% group_by(item_name) %>%
+      mutate(mom_chg = value / lag(value, 1) - 1) %>% ungroup() %>%
       group_by(date) %>%
-      mutate(
-        normalized = sum(weight, na.rm = TRUE),
-        weightN    = if_else(normalized > 0, weight / normalized, NA_real_)
-      ) %>%
-      arrange(Pchange3) %>%
-      mutate(cumsumN = cumsum(replace_na(weightN, 0))) %>%
-      ungroup()
+      mutate(weight_sum = sum(weight, na.rm = TRUE),
+             weight_n   = if_else(weight_sum > 0, weight / weight_sum, NA_real_)) %>%
+      arrange(mom_chg) %>%
+      mutate(cumwt = cumsum(replace_na(weight_n, 0))) %>% ungroup()
+    cat(sprintf("After cumwt calc:         %d rows\n", nrow(s4)))
+    cat(sprintf("  cumwt range: [%.3f, %.3f]  trim: [%.2f, %.2f]\n",
+                min(s4$cumwt, na.rm=TRUE), max(s4$cumwt, na.rm=TRUE), trim_lo, trim_hi))
 
-    cat("After Pchange3/cumsumN:        ", nrow(s4), "rows\n")
-    cat("  cumsumN range: [",
-        round(min(s4$cumsumN, na.rm=TRUE), 3), ",",
-        round(max(s4$cumsumN, na.rm=TRUE), 3), "]\n")
-    cat("  trim_lo=", trim_lo, " trim_hi=", trim_hi, "\n")
-
-    s5 <- s4 %>% filter(cumsumN >= trim_lo, cumsumN <= trim_hi)
-    cat("After cumsumN trim:            ", nrow(s5), "rows\n")
+    s5 <- s4 %>% filter(cumwt >= trim_lo, cumwt <= trim_hi)
+    cat(sprintf("After trim filter:        %d rows\n", nrow(s5)))
 
     s6 <- s5 %>% filter(date >= as.Date(input$start_date))
-    cat("After date >= start_date:      ", nrow(s6), "rows\n")
+    cat(sprintf("After start_date filter:  %d rows\n", nrow(s6)))
 
-    cat("Quarters filter months:        ", paste(sort(quarters), collapse=", "), "\n")
-    cat("Months present in data:        ",
-        paste(sort(unique(month(s6$date))), collapse=", "), "\n")
-    s7 <- s6 %>% filter(month(date) %in% quarters)
-    cat("After quarters filter:         ", nrow(s7), "rows\n")
+    s7 <- s6 %>% filter(month(date) %in% show_months)
+    cat(sprintf("After months filter:      %d rows\n", nrow(s7)))
+    cat(sprintf("  show_months: %s\n",  paste(sort(show_months), collapse=", ")))
+    cat(sprintf("  months in data: %s\n", paste(sort(unique(month(s6$date))), collapse=", ")))
 
-    s8 <- s7 %>%
-      mutate(Pchange3a = (1 + Pchange3)^12 - 1) %>%
-      filter(!is.na(Pchange3a))
-    cat("After removing NA Pchange3a:   ", nrow(s8), "rows\n")
+    s8 <- s7 %>% mutate(ann_chg = (1 + mom_chg)^12 - 1) %>% filter(!is.na(ann_chg))
+    cat(sprintf("After NA ann_chg drop:    %d rows\n\n", nrow(s8)))
 
-    cat("\n=== WEIGHT SAMPLE (most recent year) ===\n")
-    w_sample <- cpi %>%
+    cat("=== WEIGHT SAMPLE (latest year) ===\n")
+    cpi %>%
       filter(item_name %in% MEDIAN_COMPONENTS, !is.na(weight)) %>%
       distinct(item_name, year, weight) %>%
-      slice_max(year, n = 10, with_ties = FALSE)
-    print(as.data.frame(w_sample))
+      slice_max(year, n = 10, with_ties = FALSE) %>%
+      as.data.frame() %>%
+      print()
   })
 
+  # -- Status line -------------------------------------------------------------
   output$status <- renderText({
-    if (is.null(raw_data())) "Loading..."
+    if (is.null(raw_data())) "Loading\u2026"
     else paste("Last fetch:", format(Sys.time(), "%H:%M:%S"))
   })
 }
