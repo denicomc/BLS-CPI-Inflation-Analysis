@@ -163,13 +163,15 @@ ui <- fluidPage(
       dateInput("start_date", "Chart Start Date",
                 value = "2018-06-01", min = "2000-01-01"),
       sliderInput("n_quarters", "Number of Observations",
-                  min = 4, max = 24, value = 10, step = 1),
+                  min = 1, max = 84, value = 48, step = 1),
+      sliderInput("plot_height", "Plot Height (px)",
+                  min = 300, max = 3000, value = 1800, step = 20),
 
       tags$b("DISTRIBUTION TRIM",
              style = "color:#8b949e; font-size:11px; margin-top:16px; display:block;"),
       hr(style = "margin: 6px 0;"),
       sliderInput("trim_pct", "Trim Each Tail (% by weight)",
-                  min = 0, max = 40, value = 15, step = 1, post = "%"),
+                  min = 0, max = 49, value = 29, step = 1, post = "%"),
 
       tags$b("APPEARANCE",
              style = "color:#8b949e; font-size:11px; margin-top:16px; display:block;"),
@@ -184,6 +186,7 @@ ui <- fluidPage(
                               "+-20%" = "20", "+-30%" = "30"),
                   selected = "auto"),
       checkboxInput("show_zero", "Show zero-line", value = TRUE),
+      checkboxInput("show_2pct", "Show 2% target line", value = TRUE),
 
       tags$b("COMPONENTS",
              style = "color:#8b949e; font-size:11px; margin-top:16px; display:block;"),
@@ -195,13 +198,13 @@ ui <- fluidPage(
                    class = "btn-primary", width = "100%"),
       div(id = "status_msg", textOutput("status")),
       hr(),
-      checkboxInput("show_debug", "Show debug panel", value = TRUE)
+      checkboxInput("show_debug", "Show debug panel", value = FALSE)
     ),
 
     mainPanel(
       width = 9,
       uiOutput("error_msg"),
-      plotOutput("ridgeline", height = "680px"),
+      uiOutput("ridgeline_container"),
       hr(style = "border-color:#30363d;"),
       fluidRow(
         column(4, verbatimTextOutput("stats_box")),
@@ -295,6 +298,10 @@ server <- function(input, output, session) {
     }
   })
 
+  output$ridgeline_container <- renderUI({
+    plotOutput("ridgeline", height = paste0(input$plot_height, "px"))
+  })
+
   output$ridgeline <- renderPlot({
     df <- plot_data()
     validate(need(nrow(df) > 0, ""))
@@ -336,6 +343,12 @@ server <- function(input, output, session) {
     if (input$show_zero) {
       p <- p + geom_vline(xintercept = 0, color = "#f85149",
                           linetype = "dashed", linewidth = 0.7, alpha = 0.8)
+    }
+    if (input$show_2pct) {
+      p <- p + geom_vline(xintercept = 0.02, color = "#58a6ff",
+                          linetype = "dashed", linewidth = 0.7, alpha = 0.8) +
+        annotate("text", x = 0.02, y = Inf, label = "2% target",
+                 color = "#58a6ff", size = 3.2, hjust = -0.1, vjust = 1.5)
     }
     p
   }, bg = "#0d1117")
