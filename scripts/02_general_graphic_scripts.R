@@ -40,18 +40,22 @@ create_cpi_changes <- function(cpi_data){
 }
 
 calculate_trend <- function(data, variable_name, start_date, end_date) {
-  trend <- data %>%
-    filter(date == start_date | date == end_date, item_name == variable_name) %>%
-    arrange(date) %>%
-    mutate(
-      num_months = interval(lag(date, 1), date) / months(1),
-      trend = value / lag(value, 1)
+  endpoints <- data %>%
+    filter(
+      item_name == variable_name,
+      date %in% c(as.Date(start_date), as.Date(end_date))
     ) %>%
-    summarize(trenda = trend^(12/num_months) - 1) %>%
-    filter(!is.na(trenda)) %>%
-    pull(trenda)
-  
-  return(as.numeric(trend))
+    arrange(date) %>%
+    distinct(date, .keep_all = TRUE)
+
+  if (nrow(endpoints) < 2) {
+    return(NA_real_)
+  }
+
+  num_months <- interval(endpoints$date[1], endpoints$date[2]) / months(1)
+  trend_ratio <- endpoints$value[2] / endpoints$value[1]
+
+  as.numeric(trend_ratio^(12 / num_months) - 1)
 }
 
 library(lubridate)

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -L \"https://www.bls.gov/cpi/tables/relative-importance/\")",
+      "Bash(curl -s -L \"https://www.bls.gov/cpi/tables/relative-importance/home.htm\")",
+      "WebSearch",
+      "WebFetch(domain:www.bls.gov)",
+      "WebFetch(domain:www.advisorperspectives.com)",
+      "WebFetch(domain:www.api.org)",
+      "Read(//Users/mtkonczal/**)",
+      "Bash(curl -s \"https://api.bls.gov/publicAPI/v2/timeseries/data/CUUR0000SA0E?startyear=2022&endyear=2025&registrationkey=$\\(grep BLS_KEY /Users/mtkonczal/.Renviron)",
+      "Bash(python3 -m json.tool)"
+    ]
+  }
+}

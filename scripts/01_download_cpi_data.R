@@ -12,8 +12,12 @@ cpi_weights <- read_csv(file = "weights/inflation_weights.csv") %>% filter(!is.n
 base_weight <- cpi_weights %>% filter(year_weight == 2022) %>% select(item_name, base_weight = weight)
 cpi_data <- left_join(cpi_data, base_weight, by = c("item_name"))
 
-cpi_weights_later <- cpi_weights %>% select(item_name, later_weight = weight, year = year_weight)
-cpi_data <- left_join(cpi_data, cpi_weights_later, by = c("item_name", "year"))
+latest_weight_year <- max(cpi_weights$year_weight, na.rm = TRUE)
+cpi_data <- cpi_data %>%
+  mutate(weight_year = pmin(year, latest_weight_year))
+
+cpi_weights_later <- cpi_weights %>% select(item_name, later_weight = weight, weight_year = year_weight)
+cpi_data <- left_join(cpi_data, cpi_weights_later, by = c("item_name", "weight_year"))
 
 cpi_data$weight <- ifelse(!is.na(cpi_data$later_weight), cpi_data$later_weight, cpi_data$base_weight)
-cpi_data <- cpi_data %>% select(-base_weight, -later_weight)
+cpi_data <- cpi_data %>% select(-base_weight, -later_weight, -weight_year)

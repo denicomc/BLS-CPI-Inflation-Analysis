@@ -24,11 +24,11 @@ df <- df %>%
   mutate(pchange1 = value / lag(value, 1) - 1) %>%
   ungroup()
 
-first_title <- "Seasonally Unadjusted CPI Negative In Recent Months"
-years_array <- c(2019, 2022, 2024, 2025)
+first_title <- "March 2026 Approaching 2022 Levels"
+years_array <- c(2019, 2022, 2024, 2025, 2026)
 
-second_title <- "Seasonally Unadjusted Values Returning to Broad Historical Range"
-third_title <- "Compared to historical values, 2024 lines up"
+second_title <- first_title
+third_title <- first_title
 
 
 cpi_data %>%
@@ -57,7 +57,8 @@ line_cols <- c(
   "2019" = "#4E79A7", # blue
   "2022" = "#59A14F", # green
   "2024" = "#6B7280", # slate/grey
-  "2025" = "#E15759" # warm red/orange accent
+  "2025" = "#E15759", # warm red/orange accent
+  "2026" = "#B07AA1" # muted plum
 )
 
 #### First Graphic ####
@@ -99,6 +100,45 @@ ggsave(
   units = "in"
 )
 
+first_title_supercore <- "Seasonally Unadjusted Supercore CPI Negative In Recent Months"
+
+df %>%
+  filter(item_name %in% c("All items less food, shelter, and energy")) %>%
+  select(date, pchange1, item_name) %>%
+  mutate(month = month(date), year = as.factor(year(date))) %>%
+  filter(year(date) %in% years_array) %>%
+  ggplot(aes(month, pchange1, color = year)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 1.2) +
+  theme_esp() +
+  scale_x_continuous(breaks = 1:12, labels = month.name) +
+  scale_y_continuous(labels = percent) +
+  geom_text_repel(
+    aes(label = year),
+    size = 7,
+    data = . %>% group_by(year) %>% filter(month == 1) %>% ungroup(),
+    nudge_x = -0.3
+  ) +
+  labs(
+    title = first_title_supercore,
+    subtitle = "Seasonally unadjusted values for supercore CPI inflation, 1-month percent change, not annualized.",
+    caption = "Inspired by Paul Romer's blog. Mike Konczal"
+  ) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80"),
+  ) +
+  scale_color_manual(values = line_cols) +
+  guides(color = "none") +
+  geom_hline(yintercept = 0)
+
+ggsave(
+  "graphics/unadjusted_g1_SUPERCORE.png",
+  dpi = "retina",
+  width = 12,
+  height = 6.75,
+  units = "in"
+)
+
 
 df %>%
   filter(item_name %in% c("All items")) %>%
@@ -121,7 +161,13 @@ df %>%
     title = first_title,
     subtitle = "Seasonally unadjusted values for CPI inflation, all items, 1-month percent change, not annualized.",
     caption = "Inspired by Paul Romer's blog. Mike Konczal"
-  )
+  ) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80"),
+  ) +
+  scale_color_manual(values = line_cols) +
+  guides(color = "none") +
+  geom_hline(yintercept = 0)
 ggsave(
   "graphics/unadjusted_g1_ALL_ITEMS.png",
   dpi = "retina",

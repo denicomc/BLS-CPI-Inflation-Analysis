@@ -36,7 +36,7 @@ date_breaks <- generate_dates(avg_prices$date, 10)
 
 
 avg_prices %>%
-  filter(area_code == "0000", end_year == 2025, item_name %in% price_list) %>%
+  filter(area_code == "0000", end_year == 2026, item_name %in% price_list) %>%
   filter(year >= 2022) %>%
   ggplot(aes(date, value)) +
   geom_line() +

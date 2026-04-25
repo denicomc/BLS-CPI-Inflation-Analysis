@@ -53,19 +53,12 @@ source("scripts/03_specific_graphic_scripts.R")
 
 cpi_backup <- cpi_data
 
-
-cpi %>%
-  filter(seasonal == "S", item_name == "All items") %>%
-  tail(4) %>%
-  select(value) %>%
-  pull()
-
 cpi <- cpi_data %>% filter(period != "M13") %>% filter(seasonal == "S")
 cpi <- fill_single_na_geomean(cpi)
 cpi <- create_cpi_changes(cpi)
 
 #Graphic 1: Overview
-core_3_6_title <- "Low Core Inflation In Recent Months"
+core_3_6_title <- "Big Services"
 g <- three_six_graphic(
   cpi,
   "All items less food and energy",
@@ -117,7 +110,7 @@ ggsave(
 )
 
 # Graphic 2: Onion Chart
-onion_title = "Core Inflation Low Across the Board in Recent Months"
+onion_title = "Services Less Housing High in January"
 start_onion_date <- "2024-01-01" #max(cpi$date) %m-% months(30)
 onion_chart(cpi, start_onion_date, title = onion_title) +
   theme(
@@ -178,7 +171,7 @@ stacked_graphic(
   services_breakdown,
   unique(services_breakdown$item_name),
   start_date = "2022-01-01",
-  title = "Transportation Services Drive Increase in July",
+  title = "Transportation Services Drive Increase in January",
   date_breaks_length = 12,
   add_labels = TRUE,
   palette = "RdPu",
@@ -189,6 +182,57 @@ stacked_graphic(
   )
 ggsave(
   "graphics/g4_services_breakdown.png",
+  dpi = "retina",
+  width = 12,
+  height = 6.75,
+  units = "in"
+)
+
+# Graphic 4b: Core Services (split out auto insurance explicitly)
+auto_insurance_item <- read_csv(
+  "weights/inflation_weights.csv",
+  show_col_types = FALSE
+) %>%
+  filter(str_detect(str_to_lower(item_name), "motor vehicle insurance")) %>%
+  distinct(item_name) %>%
+  pull(item_name)
+
+if (length(auto_insurance_item) != 1) {
+  stop(
+    "Expected exactly one auto insurance item in weights/inflation_weights.csv"
+  )
+}
+auto_insurance_item <- auto_insurance_item[[1]]
+
+subtract_array_with_auto <- c(
+  "Shelter",
+  "Medical care services",
+  auto_insurance_item
+)
+
+services_breakdown_with_auto_insurance <- subtract_cpi_items(
+  cpi,
+  "2018-01-01",
+  "Services less energy services",
+  subtract_array = subtract_array_with_auto,
+  add_on_array = "Food away from home"
+)
+
+stacked_graphic(
+  services_breakdown_with_auto_insurance,
+  unique(services_breakdown_with_auto_insurance$item_name),
+  start_date = "2022-01-01",
+  title = paste0(auto_insurance_item, " Pops in Core Services Breakdown"),
+  date_breaks_length = 12,
+  add_labels = TRUE,
+  palette = "RdPu",
+  legend.position = c(0.85, 0.9)
+) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80"),
+  )
+ggsave(
+  "graphics/g4_services_breakdown_with_auto_insurance.png",
   dpi = "retina",
   width = 12,
   height = 6.75,
@@ -214,6 +258,62 @@ ggsave(
   units = "in"
 )
 
+# Graphic 5b: Energy Contribution to Headline Inflation
+energy_headline <- subtract_cpi_items(
+  cpi,
+  "2022-01-01",
+  "All items",
+  subtract_array = c("Energy"),
+  rest_name_variable = "All items less energy"
+)
+
+energy_colors <- c("Energy" = "#E15759", "All items less energy" = "#4E79A7")
+
+stacked_graphic(
+  energy_headline,
+  c("Energy", "All items less energy"),
+  start_date = "2022-01-01",
+  title = "Energy On Par With March 2022 Increases",
+  date_breaks_length = 6,
+  add_labels = TRUE,
+  legend.position = c(0.85, 0.9)
+) +
+  scale_fill_manual(values = energy_colors) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80"),
+  )
+ggsave(
+  "graphics/energy_contribution_headline.png",
+  dpi = "retina",
+  width = 16,
+  height = 9,
+  units = "in"
+)
+
+# T: Transportation Services Monthly Change
+T <- three_six_graphic(
+  cpi,
+  "Transportation services",
+  "2018-01-01",
+  "2020-01-01",
+  "2022-01-01",
+  title = "Transportation Services Monthly Change",
+  subtitle = "Transportation services, seasonally adjusted, boxes are one-month change annualized.",
+  include_3_6 = TRUE,
+  column_alpha = 0.2,
+  colors = c("3-Month Change" = "#2c3254", "6-Month Change" = "#ff8361")
+) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80"),
+  )
+ggsave(
+  "graphics/T.png",
+  dpi = "retina",
+  width = 12,
+  height = 6.75,
+  units = "in"
+)
+
 # Graphic 6: Ridgeline Graphic
 median_terms <- read_csv("weights/mediancpi_component_table.csv") %>%
   mutate(item_name = Component)
@@ -233,34 +333,6 @@ ggsave(
 ## Graphic 7: Seasonally Unadjusted
 #unadjusted_analysis(cpi_data, c(2019,2022,2023, 2024), title="Unadjusted sliding into prepandemic values?")
 #ggsave("graphics/g7.png", dpi="retina", width = 12, height=6.75, units = "in")
-
-# Graphic 8: Versus PCE
-cpi_versus_pce(
-  cpi,
-  breaks_value = 24,
-  start_graphic = "2011-01-01",
-  title = "The Fed's PCE Target is Historically Lower Than CPI"
-)
-ggsave(
-  "graphics/cpi_versus_pce.png",
-  dpi = "retina",
-  width = 12,
-  height = 6.75,
-  units = "in"
-)
-
-# Graphic 9: Versus Housing PCE
-housing_cpi_versus_pce(
-  cpi,
-  title = "Housing's Weight Drives CPI and PCE Divergence"
-)
-ggsave(
-  "graphics/cpi_versus_pce_housing.png",
-  dpi = "retina",
-  width = 12,
-  height = 6.75,
-  units = "in"
-)
 
 # Graphic 10: 9.1 Breakdown, Quarterly
 #pce_cpi_divergence_contributions(title="Housing's Weight Driving CPI and PCE Divergence")
@@ -320,16 +392,25 @@ ahe <- getFRED("CES0500000003", rename_variables = "ahe") %>%
   )
 
 
-ahe %>%
-  filter(year(date) >= 2023) %>%
+ahe_plot <- ahe %>% filter(year(date) >= 2023)
+last_point <- ahe_plot %>% filter(date == max(date))
+
+ahe_plot %>%
   ggplot(aes(date, real_wages_Trump)) +
+  geom_hline(
+    yintercept = last_point$real_wages_Trump,
+    linetype = "dotted",
+    color = "black",
+    size = 1
+  ) +
   geom_line(size = 1.2) +
+  geom_point(data = last_point, size = 3) +
   theme_esp() +
-  geom_hline(yintercept = 0, color = "white") +
+  geom_hline(yintercept = 0, color = "black") +
   scale_y_continuous(label = percent) +
-  scale_x_date(breaks = "1 month", date_labels = "%B\n%Y") +
+  scale_x_date(breaks = "3 months", date_labels = "%B\n%Y") +
   labs(
-    title = "Real Wages Are Not Up Since May",
+    title = "Real Wages Are Not Up Since Last Summer",
     subtitle = "Change in Average Hourly Earnings Divided by Overall CPI, Since January 2025.",
     caption = "Mike Konczal"
   )
@@ -440,3 +521,6 @@ cpi %>%
     sacrifice_ratio_12m = changeunrate / changeYoY
   ) %>%
   filter(date == max(date))
+
+
+cpi %>% filter(item_name == "Energy") %>% tail() %>% select(weight)
